@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Underground Worker Safety Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .card { background-color: #1e1e1e; border: 1px solid #333; color: white; margin-bottom: 20px; }
+        .status-badge { font-size: 0.8rem; padding: 5px 10px; border-radius: 20px; }
+        .bg-danger-glow { background-color: #ff4444; box-shadow: 0 0 15px #ff4444; }
+        #tunnelMap { background-color: #000; border: 2px solid #444; width: 100%; height: 400px; border-radius: 8px; }
+        .sensor-val { font-size: 1.5rem; font-weight: bold; color: #00ffcc; }
+        .alert-log { height: 200px; overflow-y: auto; background: #000; padding: 10px; font-family: monospace; font-size: 0.9rem; border: 1px solid #333; }
+        .alert-entry { border-bottom: 1px solid #222; padding: 5px 0; }
+        .worker-dot { transition: all 0.5s ease; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container-fluid">
+        <span class="navbar-brand mb-0 h1">🛠️ MineGuard: Real-Time Safety Dashboard</span>
+        <div class="d-flex">
+            <span class="badge bg-success" id="connectionStatus">System Online</span>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid">
+    <div class="row">
+        <!-- Sidebar: Worker List -->
+        <div class="col-md-3">
+            <h5 class="mb-3">Worker Status</h5>
+            <div id="workerCards">
+                <!-- Worker Cards will be injected here -->
+                <div class="text-muted">Waiting for data from LoRa Gateway...</div>
+            </div>
+            
+            <h5 class="mt-4 mb-3">Recent Alerts</h5>
+            <div class="alert-log" id="alertLog">
+                <div class="alert-entry text-info">[System] Monitoring started...</div>
+            </div>
+        </div>
+
+        <!-- Main Content: Map & Environment -->
+        <div class="col-md-9">
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between">
+                            <span>Underground Live Tracking</span>
+                            <small class="text-muted">WiFi RSSI Zone-Based Localization</small>
+                        </div>
+                        <div class="card-body p-0">
+                            <canvas id="tunnelMap"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row" id="sensorGrid">
+                <!-- Detailed Sensor readout for selected worker -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io();
+    const canvas = document.getElementById('tunnelMap');
+    const ctx = canvas.getContext('2d');
+    const workerCards = document.getElementById('workerCards');
+    const alertLog = document.getElementById('alertLog');
+
+    let workers = {};
+
+    // Map Zones to Coordinates on Canvas (Relative to canvas size)
+    const zoneCoords = {
+        "Mine_Zone_1": { x: 100, y: 100 },
+        "Mine_Zone_2": { x: 300, y: 100 },
+        "Mine_Zone_3": { x: 500, y: 100 },
+        "Mine_Zone_4": { x: 500, y: 300 },
+        "Mine_Zone_5": { x: 300, y: 300 },
+        "Unknown": { x: 50, y: 50 }
+    };
+
+    function initMap() {
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = 400;
+        drawMap();
+    }
+
+    function drawMap() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw Tunnel Path
+        ctx.beginPath();
+        ctx.strokeStyle = '#444';
+        ctx.lineWidth = 40;
+        ctx.lineJoin = 'round';
+        ctx.moveTo(100, 100);
+        ctx.lineTo(500, 100);
+        ctx.lineTo(500, 300);
+        ctx.lineTo(300, 300);
+        ctx.stroke();
+
+        // Draw Zone Labels
+        ctx.fillStyle = "#888";
+        ctx.font = "12px Arial";
+        Object.keys(zoneCoords).forEach(z => {
+            if(z !== "Unknown") {
+                ctx.fillText(z, zoneCoords[z].x - 30, zoneCoords[z].y - 30);
+                ctx.beginPath();
+                ctx.arc(zoneCoords[z].x, zoneCoords[z].y, 5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        });
+
+        // Draw Workers
+        Object.values(workers).forEach(w => {
+            const pos = zoneCoords[w.zone] || zoneCoords["Unknown"];
+            
+            // Pulse effect for danger
+            let color = "#00ffcc";
+            if(w.sos || w.fall || w.mq2 > 2000) {
+                color = "#ff4444";
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 25 + (Math.sin(Date.now()/200)*5), 0, Math.PI*2);
+                ctx.strokeStyle = "rgba(255, 68, 68, 0.3)";
+                ctx.stroke();
+            }
+
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 12, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.fillStyle = "white";
+            ctx.fillText(w.id, pos.x - 10, pos.y + 25);
+        });
+
+        requestAnimationFrame(drawMap);
+    }
+
+    socket.on('worker_update', (data) => {
+        console.log('Update:', data);
+        workers[data.id] = data;
+        updateUI();
+        
+        // Log critical events
+        if(data.sos) addLog(`[CRITICAL] SOS Pressed: ${data.id}`, "text-danger");
+        if(data.fall) addLog(`[WARNING] Fall Detected: ${data.id}`, "text-warning");
+        if(data.mq2 > 2500) addLog(`[DANGER] High Gas Levels: ${data.id}`, "text-danger");
+    });
+
+    function addLog(msg, className) {
+        const time = new Date().toLocaleTimeString();
+        const entry = document.createElement('div');
+        entry.className = `alert-entry ${className}`;
+        entry.innerHTML = `[${time}] ${msg}`;
+        alertLog.prepend(entry);
+    }
+
+    function updateUI() {
+        workerCards.innerHTML = '';
+        Object.values(workers).forEach(w => {
+            const card = document.createElement('div');
+            card.className = "card";
+            const danger = (w.sos || w.fall || w.mq2 > 2000);
+            
+            card.innerHTML = `
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0">${w.id}</h6>
+                        <span class="status-badge ${danger ? 'bg-danger-glow' : 'bg-success'}">
+                            ${danger ? 'DISTRESS' : 'O.K.'}
+                        </span>
+                    </div>
+                    <div class="small mb-1">Location: <span class="text-info">${w.zone}</span></div>
+                    <div class="row g-0 text-center mt-3">
+                        <div class="col-4">
+                            <div class="small text-muted">Temp</div>
+                            <div style="color:${w.t > 35 ? 'red' : '#00ffcc'}">${w.t}°C</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="small text-muted">Gas</div>
+                            <div style="color:${w.mq2 > 1000 ? 'orange' : '#00ffcc'}">${w.mq2}</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="small text-muted">Humid</div>
+                            <div>${w.h}%</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger w-100 mt-3" onclick="sendEvac('${w.id}')">
+                        Trigger Alarm
+                    </button>
+                </div>
+            `;
+            workerCards.appendChild(card);
+        });
+    }
+
+    function sendEvac(id) {
+        fetch('/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workerId: id, command: 'ALARM' })
+        }).then(() => addLog(`Sent ALARM signal to ${id}`, "text-info"));
+    }
+
+    window.addEventListener('resize', initMap);
+    initMap();
+
+</script>
+
+</body>
+</html>
