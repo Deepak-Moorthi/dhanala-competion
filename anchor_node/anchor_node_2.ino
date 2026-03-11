@@ -1,6 +1,6 @@
 // ============================================================
-//  ANCHOR NODE 1 — Complete Firmware (WITH MPU6050)
-//  Zone: Mine_Zone_1  |  ID: A-01
+//  ANCHOR NODE 2 — Complete Firmware (WITHOUT MPU6050)
+//  Zone: Mine_Zone_2  |  ID: A-02
 //  TX Interval: 20 sec normal, IMMEDIATE on danger
 // ============================================================
 
@@ -13,24 +13,22 @@
 #include <DHT_U.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Adafruit_MPU6050.h>
 
 // ─── LoRa ─────────────────────────────────────────────────────
 #define LORA_SS   5
 #define LORA_RST  14
 #define LORA_DIO0 26
 
-// ─── OLED (0.96" I2C, shared with MPU6050) ───────────────────
+// ─── OLED (0.96" I2C) ─────────────────────────────────────────
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-Adafruit_MPU6050 mpu;
 
 // ─── Zone Config ──────────────────────────────────────────────
-const char*  ZONE_SSID = "Mine_Zone_1";  // ← CHANGE per anchor
+const char*  ZONE_SSID = "Mine_Zone_2";  // ← Zone 2
 const char*  ZONE_PASS = "safety123";
-const String ANCHOR_ID = "A-01";          // ← CHANGE per anchor
+const String ANCHOR_ID = "A-02";          // ← Anchor 2
 
 // ─── Gas Sensors (ADC1 only — works with WiFi) ───────────────
 #define MQ2_PIN   32
@@ -43,16 +41,14 @@ const String ANCHOR_ID = "A-01";          // ← CHANGE per anchor
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
 // ─── MH LDR Light Sensor ──────────────────────────────────────
-#define MH_AO_PIN 33   // ADC1 — Analog light level
-#define MH_DO_PIN 15   // Digital — dark threshold trigger
+#define MH_AO_PIN 33   // ADC1
+#define MH_DO_PIN 15   // Digital threshold
 
 // ─── Thresholds ───────────────────────────────────────────────
-const int   MQ2_DANGER   = 2000;
-const int   MQ4_DANGER   = 2200;
-const int   MQ135_DANGER = 2500;
-const int   DARK_ALERT   = 10;   // light % below this = lights out
-const float VIB_THRESHOLD      = 2.5;
-const int   VIB_COUNT_REQUIRED = 10;
+const int MQ2_DANGER   = 2000;
+const int MQ4_DANGER   = 2200;
+const int MQ135_DANGER = 2500;
+const int DARK_ALERT   = 10;
 
 // ─── TX Interval ──────────────────────────────────────────────
 const unsigned long NORMAL_INTERVAL = 20000UL;  // 20 seconds
@@ -71,24 +67,8 @@ String lastWorkerZone = "-";
 String lastWorkerSOS  = "OK";
 
 // ────────────────────────────────────────────────────────────
-bool detectVibration() {
-  int highCount = 0;
-  for (int i = 0; i < 20; i++) {
-    sensors_event_t a, g, t;
-    mpu.getEvent(&a, &g, &t);
-    float mag = sqrt(a.acceleration.x * a.acceleration.x +
-                     a.acceleration.y * a.acceleration.y +
-                     a.acceleration.z * a.acceleration.z);
-    if (abs(mag - 9.8) > VIB_THRESHOLD) highCount++;
-    delay(5);
-  }
-  return (highCount >= VIB_COUNT_REQUIRED);
-}
-
-// ────────────────────────────────────────────────────────────
 void showOLED(float temp, float humid, int mq2, int mq4,
-              int lightPct, bool danger, bool vibration,
-              bool darkAlert, int workers) {
+              int lightPct, bool danger, bool darkAlert, int workers) {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
@@ -107,9 +87,6 @@ void showOLED(float temp, float humid, int mq2, int mq4,
   if (darkAlert) {
     display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
     display.println(" !! LIGHTS OUT !!    ");
-  } else if (vibration) {
-    display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-    display.println(" !! VIBRATION !!     ");
   } else if (danger) {
     display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
     display.println(" !! GAS DANGER !!    ");
@@ -156,13 +133,10 @@ void setup() {
   Serial.begin(115200);
   SPI.begin(); Wire.begin(); dht.begin();
 
-  if (!mpu.begin()) Serial.println("MPU6050 not found!");
-  else { mpu.setAccelerometerRange(MPU6050_RANGE_8_G); mpu.setFilterBandwidth(MPU6050_BAND_44_HZ); }
-
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) Serial.println("OLED not found!");
   else {
     display.clearDisplay(); display.setTextSize(1); display.setTextColor(SSD1306_WHITE);
-    display.setCursor(20, 20); display.println("MineGuard Anchor");
+    display.setCursor(20, 20); display.println("MineGuard Anchor 2");
     display.setCursor(8, 36);  display.println("Zone: " + String(ZONE_SSID));
     display.display(); delay(2000);
   }
@@ -173,7 +147,7 @@ void setup() {
   WiFi.softAP(ZONE_SSID, ZONE_PASS);
   pinMode(MH_DO_PIN, INPUT);
   calStartTime = millis();
-  Serial.println("Anchor ready: " + String(ZONE_SSID));
+  Serial.println("Anchor 2 ready: " + String(ZONE_SSID));
 }
 
 // ────────────────────────────────────────────────────────────
@@ -191,18 +165,15 @@ void loop() {
   if (!isnan(event.relative_humidity)) humidity = event.relative_humidity;
 
   // MH Light → 0–100%
-  int rawLight  = analogRead(MH_AO_PIN);
-  int lightPct  = constrain(map(rawLight, 4095, 0, 0, 100), 0, 100);
+  int rawLight = analogRead(MH_AO_PIN);
+  int lightPct = constrain(map(rawLight, 4095, 0, 0, 100), 0, 100);
   bool dark_alert = (lightPct < DARK_ALERT) || (digitalRead(MH_DO_PIN) == LOW);
 
-  // MPU6050 Vibration
-  bool vibration = detectVibration();
-
-  // Alerts
+  // Alerts (no vibration on Anchor 2)
   bool gas_alert  = (mq2   > MQ2_DANGER);
   bool meth_alert = (mq4   > MQ4_DANGER);
   bool air_alert  = (mq135 > MQ135_DANGER);
-  bool danger     = gas_alert || meth_alert || air_alert || vibration || dark_alert;
+  bool danger     = gas_alert || meth_alert || air_alert || dark_alert;
 
   int workers = WiFi.softAPgetStationNum();
 
@@ -229,17 +200,16 @@ void loop() {
   Serial.print("MQ-2 (Gas) : "); Serial.print(mq2);   Serial.println(gas_alert  ? " ALERT!" : " OK");
   Serial.print("MQ-4 (CH4) : "); Serial.print(mq4);   Serial.println(meth_alert ? " ALERT!" : " OK");
   Serial.print("MQ-135 AQI : "); Serial.print(mq135); Serial.println(air_alert  ? " ALERT!" : " OK");
-  Serial.println("--- Light & Vibration ---");
+  Serial.println("--- Light ---");
   Serial.print("Light      : "); Serial.print(lightPct); Serial.println(" %");
   Serial.print("Dark Alert : "); Serial.println(dark_alert ? "YES!" : "No");
-  Serial.print("Vibration  : "); Serial.println(vibration ? "YES DETECTED!" : "No");
   Serial.println("--- Worker ---");
   Serial.print("Worker SOS : "); Serial.println(lastWorkerSOS);
   Serial.print("DANGER     : "); Serial.println(danger ? "*** YES ***" : "No");
   Serial.println("=====================================");
 
   // OLED
-  showOLED(temperature, humidity, mq2, mq4, lightPct, danger, vibration, dark_alert, workers);
+  showOLED(temperature, humidity, mq2, mq4, lightPct, danger, dark_alert, workers);
 
   // TX — 20s normal, IMMEDIATE on danger
   unsigned long now = millis();
@@ -259,7 +229,6 @@ void loop() {
     p += "\"temp\":"      + String(temperature,1) + ",";
     p += "\"humid\":"     + String(humidity,1)    + ",";
     p += "\"light_pct\":" + String(lightPct)      + ",";
-    p += "\"vibration\":" + String(vibration   ? "true":"false") + ",";
     p += "\"dark_alert\":"+ String(dark_alert  ? "true":"false") + ",";
     p += "\"gas_alert\":" + String(gas_alert   ? "true":"false") + ",";
     p += "\"meth_alert\":"+ String(meth_alert  ? "true":"false") + ",";
