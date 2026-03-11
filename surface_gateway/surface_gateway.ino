@@ -12,13 +12,13 @@
 // --- Surface Internet Connection ---
 // The Gateway must be in range of a standard Wi-Fi router that has internet
 // access.
-const char *WIFI_SSID = "YOUR_SURFACE_WIFI_NAME";
-const char *WIFI_PASS = "YOUR_SURFACE_WIFI_PASSWORD";
+const char *WIFI_SSID = "YOUR_WIFI_NAME";       // ← Put your WiFi name here
+const char *WIFI_PASS = "YOUR_WIFI_PASSWORD";   // ← Put your WiFi password here
 
 // --- Cloud Dashboard Endpoint ---
 // Replace this with your actual Render/Vercel/Ngrok backend URL or a test site
 // like webhook.site
-const char *CLOUD_SERVER_URL = "http://your-dashboard-api.com/api/telemetry";
+const char *CLOUD_SERVER_URL = "http://192.168.2.63:3001/api/telemetry";
 
 void setup() {
   Serial.begin(115200);
